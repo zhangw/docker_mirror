@@ -13,3 +13,6 @@ python ./docker_mirror.py
 脚本执行后，就可以直接使用最快的docker镜像了。
 
 嗖嗖嗖！
+
+更新：
+1. 开始支持MacOS上，使用官方安装方式的Docker
