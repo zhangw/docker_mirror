@@ -5,14 +5,15 @@ import platform
 import re
 import time
 import os
+import json
 
 mirror_prefix = "--registry-mirror="
 
 mirrors = {
-    "netease": "http://hub-mirror.c.163.com",
-    "ustc": "https://docker.mirrors.ustc.edu.cn",
-    "official": "https://registry.docker-cn.com",
-    "aliyun": "https://2h3po24q.mirror.aliyuncs.com"  # use your own aliyun mirror url instead.
+    "netease": "http://hub-mirror.c.163.com"
+    ,"ustc": "https://docker.mirrors.ustc.edu.cn"
+    ,"official": "https://registry.docker-cn.com"
+    #"aliyun": "https://2h3po24q.mirror.aliyuncs.com"  # use your own aliyun mirror url instead.
 }
 
 docker_config_map = {
@@ -23,6 +24,10 @@ docker_config_map = {
     "CentOS Linux": {
         "config": "/etc/sysconfig/docker",
         "prefix": "OPTIONS="
+    },
+    "Darwin": {
+        "config": "~/.docker/daemon.json",
+        "prefix": ""
     }
 }
 
@@ -63,6 +68,27 @@ def execute_sys_cmd(cmd):
     return result
 
 
+def set_docker_config_for_mac(mirror):
+    dist = platform.system()
+    docker_config = get_config(dist)
+    config = None
+    origin_lines = None
+    with open(os.path.expanduser(docker_config), 'r') as f:
+        try:
+            origin_lines = f.readlines()
+            config = json.loads("".join(origin_lines))
+        except ValueError as ve:
+            print "invalid json format for file: {file}".format(file=docker_config)
+            print "origin file is:\n{lines}".format(lines="".join(origin_lines))
+    if config is not None:
+        config["registry-mirrors"] = [mirror]
+        with open(os.path.expanduser(docker_config), 'w') as f:
+            try:
+                json.dump(config, f)
+                return True
+            except Exception as exception:
+                print "origin file lines is:\n{lines}".format(lines=origin_lines)
+            
 def set_docker_config(mirror):
     dist = get_dist()
     docker_config = get_config(dist)
@@ -86,29 +112,37 @@ def set_docker_config(mirror):
 def restart_docker_daemon():
     execute_sys_cmd("systemctl restart docker")
 
+def get_full_image_name(mirror_url):
+    return mirror_url.split("://")[-1] + "/library/centos"
 
 def get_speed(mirror, mirror_url):
-    set_docker_config(mirror_url)
-    restart_docker_daemon()
+    if platform.system() == "Darwin":
+        image_name = get_full_image_name(mirror_url)
+    else:
+        set_docker_config(mirror_url)
+        restart_docker_daemon()
+        image_name = "centos"
 
-    # try to delete busybox image in case.
-    execute_sys_cmd("docker rmi centos -f 1> /dev/null 2>&1")
+    execute_sys_cmd("docker rmi " + image_name + " -f 1> /dev/null 2>&1")
 
-    print "pulling centos from {mirror}".format(mirror=mirror)
+    print "pulling {image} from {mirror}".format(image=image_name, mirror=mirror)
+
     begin_time = time.time()
 
-    execute_sys_cmd("docker pull centos 1> /dev/null 2>&1")
+    execute_sys_cmd("docker pull " + image_name + " 1> /dev/null 2>&1")
+
     end_time = time.time()
 
     cost_time = end_time - begin_time
+
     print "mirror {mirror} cost time: {cost_time}\n".format(mirror=mirror, cost_time=cost_time)
 
     # delete centos images every time.
-    execute_sys_cmd("docker rmi centos -f 1> /dev/null 2>&1")
+    execute_sys_cmd("docker rmi " + image_name + " -f 1> /dev/null 2>&1")
 
-    return 204800 / cost_time
+    return 204800 / cost_time 
 
-if __name__ == "__main__":
+if __name__ == "__main__": 
     max_speed = 0
     best_mirror = ""
     best_mirror_url = ""
@@ -120,5 +154,12 @@ if __name__ == "__main__":
             best_mirror_url = v
 
     print "best mirror is: {mirror}, set docker config and restart docker daemon now.".format(mirror=best_mirror)
-    set_docker_config(best_mirror_url)
-    restart_docker_daemon()
+
+    if platform.system() == "Darwin":
+        if set_docker_config_for_mac(best_mirror_url) is True:
+            print "Please restart docker manually, more info is here: https://docs.docker.com/docker-for-mac"
+        else:
+            print "Please check your docker daemon config file, more info is here: https://docs.docker.com/docker-for-mac"
+    else:
+        set_docker_config(best_mirror_url)
+        restart_docker_daemon()
